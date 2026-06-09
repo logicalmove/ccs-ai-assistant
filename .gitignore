@@ -1,0 +1,19 @@
+﻿# Build output
+target/
+output/
+bin_clean/
+bin/
+
+# IDE files
+.settings/
+.classpath
+.project
+*.args.txt
+output.jar
+
+# Compiled classes
+*.class
+
+# OS files
+Thumbs.db
+.DS_Store
