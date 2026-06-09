@@ -6,7 +6,7 @@ param(
 $plugins = Join-Path $CcsRoot "ccs\eclipse\plugins"
 $baseDir = Split-Path $PSScriptRoot -Parent
 $srcDir = Join-Path $baseDir "src"
-$jarName = "com.qclaw.ccs.assistant_1.1.0.jar"
+$jarName = "com.qclaw.ccs.assistant_1.3.0.jar"
 
 # --- Step 1: Build complete classpath ---
 # These are the exact JARs needed for compilation
@@ -160,7 +160,7 @@ $lines = [System.IO.File]::ReadAllLines($bundlesInfo, [System.Text.Encoding]::UT
 # Remove old qclaw entries
 $newLines = $lines | Where-Object { $_ -notmatch "com\.qclaw\.ccs\.assistant" }
 # Add new entry
-$newLines += "com.qclaw.ccs.assistant,1.1.0,plugins/$jarName,4,false"
+$newLines += "com.qclaw.ccs.assistant,1.3.0,plugins/$jarName,4,false"
 
 # Write back WITHOUT BOM (critical for OSGi!)
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -181,4 +181,6 @@ Write-Host "New features in v1.1.0:"
 Write-Host "  - Diagnose Errors: right-click > QClaw > Diagnose Errors (Ctrl+2)"
 Write-Host "  - Slash commands: /explain /optimize /fix /generate /review /docs /convert"
 Write-Host "  - Token usage display in status bar"
+Write-Host "  - C2000 peripheral templates: /gpio /pwm /epwm /adc /uart /spi /i2c /timer /dma /watchdog /clk /ecap /flash /can"
+Write-Host "  - General template: /template <description>"
 Write-Host "==========================================="

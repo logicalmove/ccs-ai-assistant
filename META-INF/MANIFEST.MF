@@ -2,7 +2,7 @@ Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
 Bundle-Name: QClaw AI Assistant
 Bundle-SymbolicName: com.qclaw.ccs.assistant; singleton:=true
-Bundle-Version: 1.1.0
+Bundle-Version: 1.3.0
 Require-Bundle: org.eclipse.ui,
  org.eclipse.swt,
  org.eclipse.jface,

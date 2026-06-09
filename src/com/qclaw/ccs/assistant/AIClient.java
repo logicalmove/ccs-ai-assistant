@@ -35,7 +35,7 @@ public class AIClient {
     public void setConfig(String host, int port, String token, String model) {
         this.gatewayHost = host != null && !host.isEmpty() ? host : "127.0.0.1";
         this.gatewayPort = port > 0 ? port : 50264;
-        this.authToken = token != null ? token : "";
+        this.authToken = (token != null && !token.isEmpty()) ? token : this.authToken;
         this.model = model != null && !model.isEmpty() ? model : "openclaw";
     }
 
@@ -52,6 +52,10 @@ public class AIClient {
         this.historyFilePath = path;
     }
 
+    public String getHistoryFilePath() { return historyFilePath; }
+
+    public int getMessageCount() { return conversationHistory.size(); }
+
     // --- HTTP methods ---
     public String sendMessage(String userMessage) throws Exception {
         conversationHistory.add(new Message("user", userMessage));
@@ -61,7 +65,9 @@ public class AIClient {
         HttpURLConnection conn = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-        conn.setRequestProperty("Authorization", "Bearer " + authToken);
+        if (authToken != null && !authToken.isEmpty()) {
+            conn.setRequestProperty("Authorization", "Bearer " + authToken);
+        }
         conn.setConnectTimeout(10000);
         conn.setReadTimeout(120000);
         conn.setDoOutput(true);
@@ -104,7 +110,9 @@ public class AIClient {
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                conn.setRequestProperty("Authorization", "Bearer " + authToken);
+                if (authToken != null && !authToken.isEmpty()) {
+                    conn.setRequestProperty("Authorization", "Bearer " + authToken);
+                }
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(120000);
                 conn.setDoOutput(true);
@@ -248,10 +256,11 @@ public class AIClient {
             body.append("{\"role\":\"").append(msg.role).append("\"");
             body.append(",\"content\":\"").append(escapeJson(msg.content)).append("\"}");
         }
-        body.append("],\"max_tokens\":2048,\"stream\":").append(stream ? "true" : "false").append("}");
+        body.append("],\"max_tokens\":2048,\"stream\":").append(stream ? "true" : "false");
         if (stream) {
             body.append(",\"stream_options\":{\"include_usage\":true}");
         }
+        body.append("}");
         return body.toString();
     }
 
