@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.2"?>
+<plugin>
+   <extension point="org.eclipse.ui.views">
+      <category
+            id="com.qclaw.ccs.assistant"
+            name="QClaw">
+      </category>
+      <view
+            id="com.qclaw.ccs.assistant.AIAssistantView"
+            name="AI Assistant"
+            class="com.qclaw.ccs.assistant.AIAssistantView"
+            icon="icons/sample.gif"
+            category="com.qclaw.ccs.assistant">
+      </view>
+   </extension>
+
+   <extension point="org.eclipse.ui.perspectiveExtensions">
+      <perspectiveExtension targetID="*">
+         <view standalone="true" minimized="false"
+               relative="org.eclipse.ui.editorss"
+               relationship="right"
+               id="com.qclaw.ccs.assistant.AIAssistantView">
+         </view>
+      </perspectiveExtension>
+   </extension>
+
+   <!-- Ask AI Command -->
+   <extension point="org.eclipse.ui.commands">
+      <command
+            id="com.qclaw.ccs.assistant.askAI"
+            name="Ask AI"
+            description="Send selected code to AI Assistant for analysis">
+      </command>
+   </extension>
+
+   <!-- Command Handler -->
+   <extension point="org.eclipse.ui.handlers">
+      <handler
+            commandId="com.qclaw.ccs.assistant.askAI"
+            class="com.qclaw.ccs.assistant.AskAIHandler">
+      </handler>
+   </extension>
+
+   <!-- Ctrl+1 Key Binding (active in editor context) -->
+   <extension point="org.eclipse.ui.bindings">
+      <key
+            commandId="com.qclaw.ccs.assistant.askAI"
+            contextId="org.eclipse.ui.textEditorScope"
+            schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="M1+1"
+            locale="">
+      </key>
+   </extension>
+
+   <!-- Editor Right-Click Menu - CDT compatible -->
+   <extension point="org.eclipse.ui.menus">
+      <!-- CDT uses popup:org.eclipse.ui.popup.any?after=additions -->
+      <menuContribution locationURI="popup:org.eclipse.ui.popup.any?after=additions">
+         <menu
+               id="com.qclaw.ccs.assistant.menu"
+               label="QClaw"
+               mnemonic="Q">
+            <command
+                  commandId="com.qclaw.ccs.assistant.askAI"
+                  id="com.qclaw.ccs.assistant.askAI.menu"
+                  label="Ask AI"
+                  tooltip="Send selected code to AI for analysis"
+                  style="push">
+            </command>
+         </menu>
+      </menuContribution>
+   </extension>
+</plugin>

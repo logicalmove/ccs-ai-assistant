@@ -1,0 +1,15 @@
+# Compiled output
+bin/
+bin_clean/
+output/
+output.jar
+
+# IDE files
+.classpath
+.project
+.settings/
+
+# Build artifacts
+javac_args.txt
+compile.bat
+compile.ps1
