@@ -36,6 +36,9 @@ public class AIAssistantView extends ViewPart {
     private Button settingsButton;
     private Label statusLabel;
     private AIClient aiClient;
+    private CCSProjectManager projectManager;
+    private CCSDebugManager debugManager;
+    private EmbeddedAIPanel embeddedPanel;
     private boolean isProcessing = false;
     private Thread activeStreamThread;
     private int totalTokensUsed = 0;
@@ -76,6 +79,11 @@ public class AIAssistantView extends ViewPart {
         {"/linker",      "链接器脚本助手（/linker <需求>，生成/修改 .cmd）"},
         {"/project",     "项目分析报告（/project，分析当前项目结构）"},
         {"/context",     "查看当前对话上下文（/context，显示对话历史摘要）"},
+        {"/import",     "导入CCS工程（/import <pattern>，自动搜索并导入）"},
+        {"/build",      "构建当前项目（/build）"},
+        {"/debug",      "启动调试（/debug，自动连接仿真器加载程序）"},
+        {"/auto",       "全自动工作流（/auto <pattern>，导入+构建+AI修复+重建）"},
+        {"/targets",    "列出可用调试目标（/targets）"},
     };
 
     /** C2000 peripheral template prompts (short name -> full system prompt) */
@@ -457,6 +465,8 @@ public class AIAssistantView extends ViewPart {
         parent.setLayout(layout);
 
         aiClient = new AIClient();
+        projectManager = new CCSProjectManager(aiClient);
+        debugManager = new CCSDebugManager(aiClient);
 
         // Load saved settings
         org.eclipse.jface.preference.IPreferenceStore store =
@@ -672,6 +682,21 @@ public class AIAssistantView extends ViewPart {
             case "/context":
                 showContextInfo();
                 return true;
+            case "/import":
+                handleImport(args);
+                return true;
+            case "/build":
+                handleBuild();
+                return true;
+            case "/debug":
+                handleDebug(args);
+                return true;
+            case "/auto":
+                handleAutoWorkflow(args);
+                return true;
+            case "/targets":
+                appendMessage("System: " + debugManager.detectAvailableTargets());
+                return true;
             default:
                 appendMessage("System: Unknown command: " + cmd + "\nType /help for available commands.");
                 return true;
@@ -816,6 +841,120 @@ public class AIAssistantView extends ViewPart {
         sb.append("  对话会自动保存到历史文件\n");
 
         appendMessage("System: " + sb.toString());
+    }
+
+    private void handleImport(String args) {
+        if (args == null || args.isEmpty()) {
+            appendMessage("System: Usage: /import <project_pattern>\n  Examples:\n    /import *blink*\n    /import F28335_PID\n    /import C:\\Users\\projects\\my_project");
+            return;
+        }
+        appendMessage("System: Searching for projects matching '" + args + "'...");
+        org.eclipse.core.runtime.jobs.Job importJob = new org.eclipse.core.runtime.jobs.Job("QClaw Import") {
+            @Override
+            protected org.eclipse.core.runtime.IStatus run(org.eclipse.core.runtime.IProgressMonitor monitor) {
+                try {
+                    java.util.List<java.io.File> found = projectManager.searchProjects(args, monitor);
+                    if (found.isEmpty()) {
+                        final String msg = "System: No projects found for '" + args + "'. Try broader pattern.";
+                        outputArea.getDisplay().asyncExec(() -> appendMessage(msg));
+                        return org.eclipse.core.runtime.Status.OK_STATUS;
+                    }
+                    final String foundMsg = "Found " + found.size() + " project(s):";
+                    outputArea.getDisplay().asyncExec(() -> {
+                        appendMessage(foundMsg);
+                        for (java.io.File f : found) appendMessage("  -> " + f.getParent());
+                    });
+                    org.eclipse.core.resources.IProject imported = projectManager.importProject(found.get(0), monitor);
+                    if (imported != null) {
+                        final String okMsg = "System: Imported project: " + imported.getName();
+                        outputArea.getDisplay().asyncExec(() -> appendMessage(okMsg));
+                    } else {
+                        final String errMsg = "System: Import failed";
+                        outputArea.getDisplay().asyncExec(() -> appendMessage(errMsg));
+                    }
+                } catch (Exception e) {
+                    final String errMsg = "System: Import error: " + e.getMessage();
+                    outputArea.getDisplay().asyncExec(() -> appendMessage(errMsg));
+                }
+                return org.eclipse.core.runtime.Status.OK_STATUS;
+            }
+        };
+        importJob.setUser(true);
+        importJob.schedule();
+    }
+
+    private void handleBuild() {
+        String projName = getActiveEditorFileName();
+        if (projName.isEmpty()) {
+            appendMessage("System: Open a project file first.");
+            return;
+        }
+        try {
+            // Find the project containing this file
+            org.eclipse.core.resources.IFile file = org.eclipse.core.resources.ResourcesPlugin
+                .getWorkspace().getRoot().getFileForLocation(
+                    new org.eclipse.core.runtime.Path(getActiveEditorPath()));
+            if (file == null) {
+                // Try getting active project from selection
+                org.eclipse.ui.IWorkbenchWindow window =
+                    org.eclipse.ui.PlatformUI.getWorkbench().getActiveWorkbenchWindow();
+                org.eclipse.jface.viewers.ISelection sel = window.getActivePage().getSelection();
+                if (sel instanceof org.eclipse.jface.viewers.IStructuredSelection) {
+                    Object first = ((org.eclipse.jface.viewers.IStructuredSelection) sel).getFirstElement();
+                    if (first instanceof org.eclipse.core.resources.IProject) {
+                        file = ((org.eclipse.core.resources.IProject) first).getFile("dummy");
+                    }
+                }
+            }
+            if (file != null) {
+                org.eclipse.core.resources.IProject project = file.getProject();
+                appendMessage("System: Building " + project.getName() + "...");
+                final org.eclipse.core.resources.IProject proj = project;
+                org.eclipse.core.runtime.jobs.Job buildJob = new org.eclipse.core.runtime.jobs.Job("QClaw Build") {
+                    @Override
+                    protected org.eclipse.core.runtime.IStatus run(org.eclipse.core.runtime.IProgressMonitor monitor) {
+                        boolean ok = projectManager.buildProject(proj, monitor);
+                        final String result = ok ? "Build SUCCESS" : "Build FAILED - use /fix to auto-repair";
+                        outputArea.getDisplay().asyncExec(() -> appendMessage("System: " + result));
+                        return org.eclipse.core.runtime.Status.OK_STATUS;
+                    }
+                };
+                buildJob.setUser(true);
+                buildJob.schedule();
+            } else {
+                appendMessage("System: Cannot determine project. Use /import first.");
+            }
+        } catch (Exception e) {
+            appendMessage("System: Build error: " + e.getMessage());
+        }
+    }
+
+    private void handleDebug(String args) {
+        appendMessage("System: Detecting debug targets...");
+        appendMessage("System: " + debugManager.detectAvailableTargets());
+        if (args != null && !args.isEmpty()) {
+            appendMessage("System: Attempting debug launch for '" + args + "'...");
+            String report = debugManager.runDebugCycle(args);
+            appendMessage("System: " + report);
+        }
+    }
+
+    private void handleAutoWorkflow(String args) {
+        if (args == null || args.isEmpty()) {
+            appendMessage("System: Usage: /auto <project_pattern>\n  Example: /auto *blink*\n  This will: search -> import -> build -> AI fix errors -> rebuild (up to 3 cycles)");
+            return;
+        }
+        appendMessage("System: Starting auto workflow for '" + args + "'...");
+        appendMessage("System: [1] Search [2] Import [3] Build [4] AI Fix [5] Rebuild");
+        org.eclipse.core.runtime.jobs.Job autoJob = new org.eclipse.core.runtime.jobs.Job("QClaw Auto") {
+            @Override
+            protected org.eclipse.core.runtime.IStatus run(org.eclipse.core.runtime.IProgressMonitor monitor) {
+                projectManager.runAutoWorkflow(args, monitor);
+                return org.eclipse.core.runtime.Status.OK_STATUS;
+            }
+        };
+        autoJob.setUser(true);
+        autoJob.schedule();
     }
 
     private void sendWithEditorContext(String prefix, String extraArgs) {
@@ -1220,6 +1359,27 @@ public class AIAssistantView extends ViewPart {
             if (editor == null) return "";
             String name = editor.getEditorInput().getName();
             return name != null ? name : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** Get active editor file absolute path */
+    private String getActiveEditorPath() {
+        try {
+            org.eclipse.ui.IEditorPart editor =
+                org.eclipse.ui.PlatformUI.getWorkbench().getActiveWorkbenchWindow()
+                    .getActivePage().getActiveEditor();
+            if (editor == null) return "";
+            org.eclipse.ui.IEditorInput input = editor.getEditorInput();
+            if (input instanceof org.eclipse.ui.IFileEditorInput) {
+                return ((org.eclipse.ui.IFileEditorInput) input).getFile()
+                    .getLocation().toOSString();
+            }
+            if (input instanceof org.eclipse.ui.IPathEditorInput) {
+                return ((org.eclipse.ui.IPathEditorInput) input).getPath().toOSString();
+            }
+            return "";
         } catch (Exception e) {
             return "";
         }

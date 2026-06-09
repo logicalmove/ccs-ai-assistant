@@ -6,7 +6,7 @@ param(
 $plugins = Join-Path $CcsRoot "ccs\eclipse\plugins"
 $baseDir = Split-Path $PSScriptRoot -Parent
 $srcDir = Join-Path $baseDir "src"
-$jarName = "com.qclaw.ccs.assistant_1.3.0.jar"
+$jarName = "com.qclaw.ccs.assistant_1.4.0.jar"
 
 # --- Step 1: Build complete classpath ---
 # These are the exact JARs needed for compilation
@@ -36,7 +36,13 @@ $requiredPatterns = @(
     "org.eclipse.emf.common_",
     "org.eclipse.emf.ecore_",
     "org.eclipse.emf.ecore.xmi_",
-    "com.ibm.icu_"
+    "com.ibm.icu_",
+    "org.eclipse.ui.console_",
+    "org.eclipse.debug.core_",
+    "org.eclipse.debug.ui_",
+    "org.eclipse.cdt.core_",
+    "org.eclipse.cdt.dsf_",
+    "org.eclipse.cdt.managedbuilder.core_"
 )
 
 $classpath = @()
@@ -160,7 +166,7 @@ $lines = [System.IO.File]::ReadAllLines($bundlesInfo, [System.Text.Encoding]::UT
 # Remove old qclaw entries
 $newLines = $lines | Where-Object { $_ -notmatch "com\.qclaw\.ccs\.assistant" }
 # Add new entry
-$newLines += "com.qclaw.ccs.assistant,1.3.0,plugins/$jarName,4,false"
+$newLines += "com.qclaw.ccs.assistant,1.4.0,plugins/$jarName,4,false"
 
 # Write back WITHOUT BOM (critical for OSGi!)
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -177,10 +183,11 @@ if (Test-Path $osgiCache) {
 Write-Host "`n==========================================="
 Write-Host "Build complete! Restart CCS to activate."
 Write-Host "==========================================="
-Write-Host "New features in v1.1.0:"
-Write-Host "  - Diagnose Errors: right-click > QClaw > Diagnose Errors (Ctrl+2)"
-Write-Host "  - Slash commands: /explain /optimize /fix /generate /review /docs /convert"
-Write-Host "  - Token usage display in status bar"
-Write-Host "  - C2000 peripheral templates: /gpio /pwm /epwm /adc /uart /spi /i2c /timer /dma /watchdog /clk /ecap /flash /can"
-Write-Host "  - General template: /template <description>"
+Write-Host "New features in v1.4.0:"
+Write-Host "  - Project auto-import: /import <pattern> search and import CCS projects"
+Write-Host "  - Auto build: /build compile current project"
+Write-Host "  - AI auto-fix: build -> AI analysis -> code fix -> rebuild (up to 3 cycles)"
+Write-Host "  - Debug integration: /debug /targets detect launch configs"
+Write-Host "  - Full auto workflow: /auto <pattern> import+build+fix+rebuild"
+Write-Host "  - Console integration: AI output in QClaw Console view"
 Write-Host "==========================================="
