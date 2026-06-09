@@ -25,18 +25,22 @@
       </perspectiveExtension>
    </extension>
 
-   <!-- Ask AI Command -->
+   <!-- Commands -->
    <extension point="org.eclipse.ui.commands">
       <command
             id="com.qclaw.ccs.assistant.askAI"
             name="Ask AI"
             description="Send selected code to AI Assistant for analysis">
       </command>
-      <!-- Diagnose Errors Command -->
       <command
             id="com.qclaw.ccs.assistant.diagnoseErrors"
             name="Diagnose Errors"
             description="Send compilation errors to AI for diagnosis and fixes">
+      </command>
+      <command
+            id="com.qclaw.ccs.assistant.settings"
+            name="Settings"
+            description="Configure AI Assistant settings">
       </command>
    </extension>
 
@@ -52,7 +56,7 @@
       </handler>
    </extension>
 
-   <!-- Ctrl+1 Key Binding (active in editor context) -->
+   <!-- Key Bindings -->
    <extension point="org.eclipse.ui.bindings">
       <key
             commandId="com.qclaw.ccs.assistant.askAI"
@@ -70,7 +74,7 @@
       </key>
    </extension>
 
-   <!-- Editor Right-Click Menu - CDT compatible -->
+   <!-- Editor Right-Click Menu -->
    <extension point="org.eclipse.ui.menus">
       <menuContribution locationURI="popup:org.eclipse.ui.popup.any?after=additions">
          <menu

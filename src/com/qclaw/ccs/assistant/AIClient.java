@@ -14,30 +14,54 @@ import java.util.regex.Pattern;
 
 public class AIClient {
 
-    private static final String GATEWAY_HOST = "127.0.0.1";
-    private static final int GATEWAY_PORT = 50264;
+    private String gatewayHost = "127.0.0.1";
+    private int gatewayPort = 50264;
+    private String authToken = "cd5cbe926a503c5098ce18d21d52b69b62e1104e1738a056";
+    private String model = "openclaw";
     private static final String CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
-    private static final String AUTH_TOKEN = "cd5cbe926a503c5098ce18d21d52b69b62e1104e1738a056";
-    private static final String MODEL = "openclaw";
+    private static final String DEFAULT_SYSTEM_PROMPT =
+        "You are a CCS AI assistant helping embedded developers with code issues." +
+        "The user is using TI Code Composer Studio (CCS) for embedded development." +
+        "Respond in concise Chinese. Be accurate with code examples.";
 
     private final List<Message> conversationHistory = new ArrayList<>();
+    private String historyFilePath = null;
 
     public AIClient() {
-        conversationHistory.add(new Message("system",
-            "You are a CCS AI assistant helping embedded developers with code issues." +
-            "The user is using TI Code Composer Studio (CCS) for embedded development." +
-            "Respond in concise Chinese. Be accurate with code examples."));
+        conversationHistory.add(new Message("system", DEFAULT_SYSTEM_PROMPT));
     }
 
+    // --- Configuration ---
+    public void setConfig(String host, int port, String token, String model) {
+        this.gatewayHost = host != null && !host.isEmpty() ? host : "127.0.0.1";
+        this.gatewayPort = port > 0 ? port : 50264;
+        this.authToken = token != null ? token : "";
+        this.model = model != null && !model.isEmpty() ? model : "openclaw";
+    }
+
+    public String getConfigString() {
+        return gatewayHost + ":" + gatewayPort + "|" + model;
+    }
+
+    public String getGatewayHost() { return gatewayHost; }
+    public int getGatewayPort() { return gatewayPort; }
+    public String getAuthToken() { return authToken; }
+    public String getModel() { return model; }
+
+    public void setHistoryFilePath(String path) {
+        this.historyFilePath = path;
+    }
+
+    // --- HTTP methods ---
     public String sendMessage(String userMessage) throws Exception {
         conversationHistory.add(new Message("user", userMessage));
         String jsonBody = buildRequestBody(false);
 
-        URL url = new URL("http://" + GATEWAY_HOST + ":" + GATEWAY_PORT + CHAT_COMPLETIONS_PATH);
+        URL url = new URL("http://" + gatewayHost + ":" + gatewayPort + CHAT_COMPLETIONS_PATH);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-        conn.setRequestProperty("Authorization", "Bearer " + AUTH_TOKEN);
+        conn.setRequestProperty("Authorization", "Bearer " + authToken);
         conn.setConnectTimeout(10000);
         conn.setReadTimeout(120000);
         conn.setDoOutput(true);
@@ -76,11 +100,11 @@ public class AIClient {
 
         Thread streamThread = new Thread(() -> {
             try {
-                URL url = new URL("http://" + GATEWAY_HOST + ":" + GATEWAY_PORT + CHAT_COMPLETIONS_PATH);
+                URL url = new URL("http://" + gatewayHost + ":" + gatewayPort + CHAT_COMPLETIONS_PATH);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                conn.setRequestProperty("Authorization", "Bearer " + AUTH_TOKEN);
+                conn.setRequestProperty("Authorization", "Bearer " + authToken);
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(120000);
                 conn.setDoOutput(true);
@@ -109,7 +133,6 @@ public class AIClient {
                         String data = line.substring(6).trim();
                         if (data.equals("[DONE]")) break;
 
-                        // Extract usage from final chunk if present
                         if (data.contains("\"usage\"")) {
                             usageJson = data;
                         }
@@ -123,15 +146,16 @@ public class AIClient {
                 }
                 reader.close();
 
-                // Add to conversation history
                 String content = fullResponse.toString();
                 if (!content.isEmpty()) {
                     conversationHistory.add(new Message("assistant", content));
                 }
 
-                // Extract usage JSON if available
                 String usage = extractUsageFromChunk(usageJson);
                 callback.onComplete(usage);
+
+                // Auto-save history after each response
+                saveHistory();
 
             } catch (Exception e) {
                 callback.onError(e.getMessage());
@@ -147,7 +171,6 @@ public class AIClient {
         try {
             int usageIdx = chunk.indexOf("\"usage\"");
             if (usageIdx < 0) return null;
-            // Find the usage object: "usage":{...}
             int braceStart = chunk.indexOf('{', usageIdx);
             if (braceStart < 0) return null;
             int depth = 0;
@@ -217,7 +240,7 @@ public class AIClient {
 
     private String buildRequestBody(boolean stream) {
         StringBuilder body = new StringBuilder();
-        body.append("{\"model\":\"").append(MODEL).append("\"");
+        body.append("{\"model\":\"").append(model).append("\"");
         body.append(",\"messages\":[");
         for (int i = 0; i < conversationHistory.size(); i++) {
             Message msg = conversationHistory.get(i);
@@ -226,23 +249,9 @@ public class AIClient {
             body.append(",\"content\":\"").append(escapeJson(msg.content)).append("\"}");
         }
         body.append("],\"max_tokens\":2048,\"stream\":").append(stream ? "true" : "false").append("}");
-        // Include usage in stream_options if streaming
         if (stream) {
             body.append(",\"stream_options\":{\"include_usage\":true}");
         }
-        return body.toString();
-    }
-
-    private String buildRawRequestBody(String userMessage, boolean stream) {
-        StringBuilder body = new StringBuilder();
-        body.append("{\"model\":\"").append(MODEL).append("\"");
-        body.append(",\"messages\":[");
-        body.append("{\"role\":\"system\",\"content\":\"").append(escapeJson(
-            "You are a CCS AI assistant helping embedded developers with code issues." +
-            "The user is using TI Code Composer Studio (CCS) for embedded development." +
-            "Respond in concise Chinese. Be accurate with code examples.")).append("\"}");
-        body.append(",{\"role\":\"user\",\"content\":\"").append(escapeJson(userMessage)).append("\"}");
-        body.append("],\"max_tokens\":2048,\"stream\":").append(stream ? "true" : "false").append("}");
         return body.toString();
     }
 
@@ -292,36 +301,106 @@ public class AIClient {
                   .replace("\t", "\\t");
     }
 
-    public String sendRawMessage(String userMessage) throws Exception {
-        String jsonBody = buildRawRequestBody(userMessage, false);
+    // --- Chat History Persistence (simple JSON) ---
 
-        URL url = new URL("http://" + GATEWAY_HOST + ":" + GATEWAY_PORT + CHAT_COMPLETIONS_PATH);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-        conn.setRequestProperty("Authorization", "Bearer " + AUTH_TOKEN);
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(120000);
-        conn.setDoOutput(true);
+    /** Save conversation history to file */
+    public void saveHistory() {
+        if (historyFilePath == null) return;
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("{\"messages\":[\n");
+            for (int i = 0; i < conversationHistory.size(); i++) {
+                Message msg = conversationHistory.get(i);
+                if (i > 0) sb.append(",\n");
+                sb.append("  {\"role\":\"").append(escapeJson(msg.role)).append("\"");
+                sb.append(",\"content\":\"").append(escapeJson(msg.content)).append("\"}");
+            }
+            sb.append("\n]}");
 
-        byte[] bodyBytes = jsonBody.getBytes(StandardCharsets.UTF_8);
-        OutputStream os = conn.getOutputStream();
-        os.write(bodyBytes);
-        os.flush();
-        os.close();
-
-        int responseCode = conn.getResponseCode();
-        String responseBody = readStream(conn, responseCode);
-        if (responseCode != 200) {
-            throw new Exception("API error " + responseCode + ": " + responseBody);
+            java.io.FileWriter fw = new java.io.FileWriter(historyFilePath);
+            fw.write(sb.toString());
+            fw.close();
+        } catch (Exception e) {
+            // Silent fail - history is non-critical
         }
+    }
 
-        String content = extractContent(responseBody);
-        return content != null ? content : "(No response)";
+    /** Load conversation history from file */
+    public boolean loadHistory() {
+        if (historyFilePath == null) return false;
+        java.io.File f = new java.io.File(historyFilePath);
+        if (!f.exists()) return false;
+        try {
+            String content = new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+            // Simple parsing: extract role/content pairs
+            List<Message> loaded = new ArrayList<>();
+            int idx = 0;
+            while ((idx = content.indexOf("\"role\":", idx)) >= 0) {
+                int colonIdx = content.indexOf(":", idx + 7);
+                int q1 = content.indexOf("\"", colonIdx + 1);
+                int q2 = findClosingQuote(content, q1 + 1);
+                if (q2 < 0) break;
+                String role = content.substring(q1 + 1, q2).replace("\\\"", "\"");
+
+                int cIdx = content.indexOf("\"content\":", q2);
+                if (cIdx < 0) break;
+                int cColon = content.indexOf(":", cIdx + 10);
+                int cq1 = content.indexOf("\"", cColon + 1);
+                int cq2 = findClosingQuote(content, cq1 + 1);
+                if (cq2 < 0) break;
+                String msgContent = content.substring(cq1 + 1, cq2)
+                    .replace("\\n", "\n").replace("\\t", "\t")
+                    .replace("\\\"", "\"").replace("\\\\", "\\");
+
+                loaded.add(new Message(role, msgContent));
+                idx = cq2 + 1;
+            }
+            if (!loaded.isEmpty()) {
+                conversationHistory.clear();
+                conversationHistory.addAll(loaded);
+                return true;
+            }
+        } catch (Exception e) {
+            // Silent fail
+        }
+        return false;
+    }
+
+    /** Find the closing quote for a JSON string value */
+    private int findClosingQuote(String s, int start) {
+        int i = start;
+        while (i < s.length()) {
+            char c = s.charAt(i);
+            if (c == '\\') { i += 2; continue; }
+            if (c == '"') return i;
+            i++;
+        }
+        return -1;
+    }
+
+    /** Delete history file */
+    public void deleteHistoryFile() {
+        if (historyFilePath != null) {
+            new java.io.File(historyFilePath).delete();
+        }
+    }
+
+    /** Get last N messages as text for display */
+    public String getRecentHistory(int count) {
+        StringBuilder sb = new StringBuilder();
+        int start = Math.max(0, conversationHistory.size() - count);
+        for (int i = start; i < conversationHistory.size(); i++) {
+            Message msg = conversationHistory.get(i);
+            if ("system".equals(msg.role)) continue;
+            String label = "user".equals(msg.role) ? "You" : "AI";
+            sb.append(label).append(": ").append(msg.content).append("\n\n");
+        }
+        return sb.toString();
     }
 
     public void clearHistory() {
         while (conversationHistory.size() > 1) { conversationHistory.remove(1); }
+        deleteHistoryFile();
     }
 
     private static class Message {

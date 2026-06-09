@@ -17,6 +17,8 @@ import org.eclipse.ui.part.ViewPart;
 import java.io.FileOutputStream;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -29,6 +31,8 @@ public class AIAssistantView extends ViewPart {
     private Button clearButton;
     private Button copyButton;
     private Button exportButton;
+    private Button insertCodeButton;
+    private Button settingsButton;
     private Label statusLabel;
     private AIClient aiClient;
     private boolean isProcessing = false;
@@ -94,7 +98,6 @@ public class AIAssistantView extends ViewPart {
                 outputArea.getDisplay().asyncExec(() -> {
                     if (!outputArea.isDisposed()) {
                         appendText("\n");
-                        // Parse usage
                         if (usage != null && !usage.isEmpty()) {
                             parseUsage(usage);
                         }
@@ -128,8 +131,7 @@ public class AIAssistantView extends ViewPart {
 
             if (pm.find()) lastPromptTokens = Integer.parseInt(pm.group(1));
             if (cm.find()) lastCompletionTokens = Integer.parseInt(cm.group(1));
-            if (tm.find() && !pm.find()) {
-                // Some APIs only return total_tokens
+            if (tm.find()) {
                 totalTokensUsed = Integer.parseInt(tm.group(1));
             } else {
                 totalTokensUsed += lastPromptTokens + lastCompletionTokens;
@@ -194,6 +196,157 @@ public class AIAssistantView extends ViewPart {
         }
     }
 
+    /** Insert code from last AI response into active editor */
+    public void insertCodeToEditor() {
+        String response = currentResponse.toString();
+        List<String> codeBlocks = extractCodeBlocks(response);
+
+        if (codeBlocks.isEmpty()) {
+            updateStatus("No code blocks found in last response");
+            return;
+        }
+
+        String codeToInsert;
+        if (codeBlocks.size() == 1) {
+            codeToInsert = codeBlocks.get(0);
+        } else {
+            // Multiple code blocks: show selection dialog
+            codeToInsert = showCodeBlockSelector(codeBlocks);
+            if (codeToInsert == null) return;
+        }
+
+        // Insert into active editor
+        try {
+            org.eclipse.ui.IWorkbenchWindow window =
+                org.eclipse.ui.PlatformUI.getWorkbench().getActiveWorkbenchWindow();
+            if (window == null) { updateStatus("No active window"); return; }
+            org.eclipse.ui.IWorkbenchPage page = window.getActivePage();
+            if (page == null) { updateStatus("No active page"); return; }
+            org.eclipse.ui.IEditorPart editor = page.getActiveEditor();
+            if (editor == null) { updateStatus("No active editor"); return; }
+
+            org.eclipse.ui.texteditor.ITextEditor te =
+                (editor instanceof org.eclipse.ui.texteditor.ITextEditor)
+                    ? (org.eclipse.ui.texteditor.ITextEditor) editor
+                    : editor.getAdapter(org.eclipse.ui.texteditor.ITextEditor.class);
+            if (te == null) { updateStatus("Editor does not support text insertion"); return; }
+
+            org.eclipse.ui.IEditorInput editorInput = te.getEditorInput();
+            org.eclipse.jface.text.IDocument doc = te.getDocumentProvider().getDocument(editorInput);
+            org.eclipse.jface.text.ITextSelection sel =
+                (org.eclipse.jface.text.ITextSelection) te.getSelectionProvider().getSelection();
+
+            int offset = sel.getOffset();
+            int length = sel.getLength();
+
+            doc.replace(offset, length, codeToInsert);
+            te.getSelectionProvider().setSelection(
+                new org.eclipse.jface.text.TextSelection(offset, codeToInsert.length()));
+            updateStatus("Code inserted (" + codeToInsert.length() + " chars)");
+        } catch (Exception e) {
+            updateStatus("Insert failed: " + e.getMessage());
+        }
+    }
+
+    /** Extract code blocks from text (between ``` markers) */
+    private List<String> extractCodeBlocks(String text) {
+        List<String> blocks = new ArrayList<>();
+        Pattern p = Pattern.compile("```[\\w]*\\n([\\s\\S]*?)```", Pattern.MULTILINE);
+        Matcher m = p.matcher(text);
+        while (m.find()) {
+            blocks.add(m.group(1));
+        }
+        return blocks;
+    }
+
+    /** Show dialog to select one of multiple code blocks */
+    private String showCodeBlockSelector(List<String> codeBlocks) {
+        String[] items = new String[codeBlocks.size()];
+        for (int i = 0; i < codeBlocks.size(); i++) {
+            String block = codeBlocks.get(i);
+            String firstLine = block.split("\\r?\\n")[0].trim();
+            items[i] = "Block " + (i + 1) + ": " +
+                (firstLine.length() > 50 ? firstLine.substring(0, 50) + "..." : firstLine);
+        }
+
+        org.eclipse.swt.widgets.List dialogList = new org.eclipse.swt.widgets.List(
+            getSite().getShell(), SWT.SINGLE | SWT.BORDER | SWT.V_SCROLL);
+        for (String item : items) dialogList.add(item);
+
+        // Simple selection dialog
+        org.eclipse.swt.widgets.Shell shell = new org.eclipse.swt.widgets.Shell(
+            getSite().getShell(), SWT.DIALOG_TRIM | SWT.APPLICATION_MODAL);
+        shell.setText("Select Code Block");
+        shell.setSize(400, Math.min(300, 60 + codeBlocks.size() * 25));
+        shell.setLayout(new GridLayout(1, false));
+
+        org.eclipse.swt.widgets.Label label = new org.eclipse.swt.widgets.Label(shell, SWT.NONE);
+        label.setText("Found " + codeBlocks.size() + " code blocks. Select one to insert:");
+        label.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        org.eclipse.swt.widgets.List list = new org.eclipse.swt.widgets.List(
+            shell, SWT.SINGLE | SWT.BORDER | SWT.V_SCROLL);
+        list.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        for (String item : items) list.add(item);
+        list.setSelection(0);
+
+        Composite btnComp = new Composite(shell, SWT.NONE);
+        btnComp.setLayout(new GridLayout(2, true));
+        btnComp.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        final int[] result = {0};
+        final boolean[] cancelled = {false};
+
+        Button okBtn = new Button(btnComp, SWT.PUSH);
+        okBtn.setText("Insert");
+        okBtn.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        okBtn.addListener(SWT.Selection, e -> {
+            result[0] = list.getSelectionIndex();
+            shell.close();
+        });
+
+        Button cancelBtn = new Button(btnComp, SWT.PUSH);
+        cancelBtn.setText("Cancel");
+        cancelBtn.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        cancelBtn.addListener(SWT.Selection, e -> {
+            cancelled[0] = true;
+            shell.close();
+        });
+
+        shell.open();
+        org.eclipse.swt.widgets.Display display = shell.getDisplay();
+        while (!shell.isDisposed()) {
+            if (!display.readAndDispatch()) display.sleep();
+        }
+
+        if (cancelled[0]) return null;
+        int idx = result[0];
+        return (idx >= 0 && idx < codeBlocks.size()) ? codeBlocks.get(idx) : null;
+    }
+
+    /** Open settings dialog */
+    public void openSettings() {
+        org.eclipse.jface.preference.IPreferenceStore store =
+            org.eclipse.ui.PlatformUI.getWorkbench().getPreferenceStore();
+
+        // Set defaults if not set
+        store.setDefault("qclaw.gateway.host", "127.0.0.1");
+        store.setDefault("qclaw.gateway.port", "50264");
+        store.setDefault("qclaw.gateway.token", aiClient.getAuthToken());
+        store.setDefault("qclaw.gateway.model", "openclaw");
+
+        SettingsDialog dialog = new SettingsDialog(getSite().getShell(), store, aiClient);
+        dialog.open();
+
+        // Apply settings
+        String host = store.getString("qclaw.gateway.host");
+        int port = store.getInt("qclaw.gateway.port");
+        String token = store.getString("qclaw.gateway.token");
+        String model = store.getString("qclaw.gateway.model");
+        aiClient.setConfig(host, port, token, model);
+        updateStatus("Ready [" + aiClient.getConfigString() + "]");
+    }
+
     private void reEnableInput() {
         if (!sendButton.isDisposed()) {
             isProcessing = false;
@@ -209,11 +362,15 @@ public class AIAssistantView extends ViewPart {
 
     private void updateStatus(String text) {
         if (statusLabel != null && !statusLabel.isDisposed()) {
-            String tokenInfo = " | Tokens: " + totalTokensUsed;
-            if (lastPromptTokens > 0 || lastCompletionTokens > 0) {
-                tokenInfo += " (+" + lastPromptTokens + " prompt, " + lastCompletionTokens + " completion)";
+            String tokenInfo = "";
+            if (totalTokensUsed > 0 || lastPromptTokens > 0) {
+                tokenInfo = " | Tokens: " + totalTokensUsed;
+                if (lastPromptTokens > 0 || lastCompletionTokens > 0) {
+                    tokenInfo += " (+" + lastPromptTokens + " prompt, " + lastCompletionTokens + " completion)";
+                }
             }
-            statusLabel.setText(text + tokenInfo);
+            String configInfo = " [" + aiClient.getConfigString() + "]";
+            statusLabel.setText(text + tokenInfo + configInfo);
         }
     }
 
@@ -226,15 +383,31 @@ public class AIAssistantView extends ViewPart {
 
         aiClient = new AIClient();
 
+        // Load saved settings
+        org.eclipse.jface.preference.IPreferenceStore store =
+            org.eclipse.ui.PlatformUI.getWorkbench().getPreferenceStore();
+        String host = store.getString("qclaw.gateway.host");
+        int port = store.getInt("qclaw.gateway.port");
+        String token = store.getString("qclaw.gateway.token");
+        String model = store.getString("qclaw.gateway.model");
+        aiClient.setConfig(host, port, token, model);
+
+        // Set up history persistence
+        try {
+            java.net.URL dataUrl = org.eclipse.core.runtime.Platform.getInstanceLocation().getURL();
+            java.io.File historyDir = new java.io.File(dataUrl.getPath());
+            historyDir.mkdirs();
+            aiClient.setHistoryFilePath(historyDir.getAbsolutePath() + java.io.File.separator + "qclaw-chat-history.json");
+        } catch (Exception e) { /* history not available */ }
+
         // Output area
         outputArea = new StyledText(parent, SWT.BORDER | SWT.V_SCROLL | SWT.H_SCROLL | SWT.WRAP);
         outputArea.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
-        outputArea.setText(buildWelcomeMessage());
         outputArea.setEditable(false);
 
         // Button bar
         Composite buttonComposite = new Composite(parent, SWT.NONE);
-        GridLayout btnLayout = new GridLayout(6, false);
+        GridLayout btnLayout = new GridLayout(8, false);
         btnLayout.marginWidth = 0;
         btnLayout.marginHeight = 5;
         buttonComposite.setLayout(btnLayout);
@@ -257,6 +430,11 @@ public class AIAssistantView extends ViewPart {
         copyButton.setText("Copy");
         copyButton.addListener(SWT.Selection, e -> copyLastResponse());
 
+        insertCodeButton = new Button(buttonComposite, SWT.PUSH);
+        insertCodeButton.setText("Insert");
+        insertCodeButton.setToolTipText("Insert code from last AI response into editor");
+        insertCodeButton.addListener(SWT.Selection, e -> insertCodeToEditor());
+
         exportButton = new Button(buttonComposite, SWT.PUSH);
         exportButton.setText("Export");
         exportButton.addListener(SWT.Selection, e -> exportChat());
@@ -265,16 +443,29 @@ public class AIAssistantView extends ViewPart {
         clearButton.setText("Clear");
         clearButton.addListener(SWT.Selection, e -> clearChat());
 
-        // Handle Enter key and Slash commands
+        settingsButton = new Button(buttonComposite, SWT.PUSH);
+        settingsButton.setText("Settings");
+        settingsButton.setToolTipText("Configure Gateway settings");
+        settingsButton.addListener(SWT.Selection, e -> openSettings());
+
+        // Handle Enter key
         inputField.addListener(SWT.DefaultSelection, e -> sendMessage());
-        inputField.addListener(SWT.Verify, e -> {
-            // Auto-complete hint for slash commands
-        });
 
         // Status bar
         statusLabel = new Label(parent, SWT.NONE);
         statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        statusLabel.setText("Ready");
+
+        // Load chat history
+        boolean loaded = aiClient.loadHistory();
+        if (loaded) {
+            String history = aiClient.getRecentHistory(20);
+            outputArea.setText(buildWelcomeMessage() + "\n--- Restored History ---\n\n" + history);
+            outputArea.setSelection(outputArea.getText().length());
+        } else {
+            outputArea.setText(buildWelcomeMessage());
+        }
+        updateStatus("Ready");
+        inputField.setFocus();
     }
 
     private String buildWelcomeMessage() {
@@ -284,12 +475,14 @@ public class AIAssistantView extends ViewPart {
         sb.append("Quick Actions:\n");
         sb.append("  - Select code, right-click > QClaw > Ask AI\n");
         sb.append("  - Select code, press Ctrl+1 to analyze\n");
-        sb.append("  - Right-click > QClaw > Diagnose Errors\n\n");
+        sb.append("  - Right-click > QClaw > Diagnose Errors\n");
+        sb.append("  - Ctrl+2 to diagnose compilation errors\n");
+        sb.append("  - Insert button to paste AI code into editor\n\n");
         sb.append("Slash Commands:\n");
         for (String[] cmd : SLASH_COMMANDS) {
             sb.append(String.format("  %-12s %s\n", cmd[0], cmd[1]));
         }
-        sb.append("\nCtrl+1 in editor: Quick ask AI with selected code\n\n");
+        sb.append("\nSettings > Configure Gateway address and model\n\n");
         return sb.toString();
     }
 
@@ -300,7 +493,6 @@ public class AIAssistantView extends ViewPart {
         String cmd = input.trim().toLowerCase();
         String args = "";
 
-        // Split command and arguments
         int spaceIdx = input.indexOf(' ');
         if (spaceIdx > 0) {
             cmd = input.substring(0, spaceIdx).toLowerCase();
@@ -311,19 +503,15 @@ public class AIAssistantView extends ViewPart {
             case "/help":
                 showHelp();
                 return true;
-
             case "/explain":
                 sendWithEditorContext("请详细解释以下代码的功能、逻辑和关键点：\n\n", args);
                 return true;
-
             case "/optimize":
                 sendWithEditorContext("请优化以下代码，提高性能和可读性，并说明修改原因：\n\n", args);
                 return true;
-
             case "/fix":
                 sendDiagnoseErrors();
                 return true;
-
             case "/generate":
                 if (args.isEmpty()) {
                     appendMessage("System: Usage: /generate <description>\nExample: /generate C2000 GPIO toggle function");
@@ -331,15 +519,12 @@ public class AIAssistantView extends ViewPart {
                 }
                 sendPromptToAI("请根据以下描述生成TI C2000嵌入式C代码，包含必要的头文件和注释：\n\n" + args);
                 return true;
-
             case "/review":
                 sendWithEditorContext("请对以下代码进行审查，找出潜在bug、安全问题、性能问题和改进建议：\n\n", args);
                 return true;
-
             case "/docs":
                 sendWithEditorContext("请为以下代码生成完整的文档注释（Doxygen风格），包括函数说明、参数、返回值和示例：\n\n", args);
                 return true;
-
             case "/convert":
                 if (args.isEmpty()) {
                     appendMessage("System: Usage: /convert <target>\nExample: /convert C++, /convert Assembly, /convert Rust");
@@ -347,14 +532,12 @@ public class AIAssistantView extends ViewPart {
                 }
                 sendWithEditorContext("请将以下代码转换为" + args + "，保持功能等价：\n\n", "");
                 return true;
-
             default:
                 appendMessage("System: Unknown command: " + cmd + "\nType /help for available commands.");
                 return true;
         }
     }
 
-    /** Show help message */
     private void showHelp() {
         StringBuilder sb = new StringBuilder();
         sb.append("=== Available Commands ===\n\n");
@@ -366,10 +549,10 @@ public class AIAssistantView extends ViewPart {
         sb.append("  - If no code selected, the entire file content is used\n");
         sb.append("  - /fix reads Problems view for compilation errors\n");
         sb.append("  - /generate creates code from a description\n");
+        sb.append("  - Insert button pastes AI code blocks into your editor\n");
         appendMessage("System: " + sb.toString());
     }
 
-    /** Send command with current editor's selected text (or full file) as context */
     private void sendWithEditorContext(String prefix, String extraArgs) {
         String code = getActiveEditorSelection();
         if (code.isEmpty()) {
@@ -383,7 +566,6 @@ public class AIAssistantView extends ViewPart {
         sendPromptToAI(prompt);
     }
 
-    /** Trigger error diagnosis (same as DiagnoseErrorsHandler) */
     private void sendDiagnoseErrors() {
         try {
             org.eclipse.ui.IWorkbenchWindow window =
@@ -435,7 +617,6 @@ public class AIAssistantView extends ViewPart {
             }
             report.append("\n请逐个分析错误原因并给出修复建议。");
 
-            // Attach source
             try {
                 org.eclipse.ui.texteditor.ITextEditor te =
                     (editor instanceof org.eclipse.ui.texteditor.ITextEditor)
@@ -455,7 +636,6 @@ public class AIAssistantView extends ViewPart {
         }
     }
 
-    /** Get selected text or full file from active editor */
     private String getActiveEditorSelection() {
         try {
             org.eclipse.ui.IWorkbenchWindow window =
@@ -477,7 +657,6 @@ public class AIAssistantView extends ViewPart {
             String text = sel.getText();
             if (text != null && !text.trim().isEmpty()) return text;
 
-            // No selection → full file
             org.eclipse.ui.IEditorInput editorInput = te.getEditorInput();
             return te.getDocumentProvider().getDocument(editorInput).get();
         } catch (Exception e) {
@@ -485,7 +664,6 @@ public class AIAssistantView extends ViewPart {
         }
     }
 
-    /** Detect language from active editor file extension */
     private String detectEditorLanguage() {
         try {
             org.eclipse.ui.IEditorPart editor =
@@ -512,7 +690,6 @@ public class AIAssistantView extends ViewPart {
         if (message.isEmpty()) return;
         inputField.setText("");
 
-        // Check for slash commands
         if (handleSlashCommand(message)) return;
 
         sendPromptToAI(message);
@@ -541,7 +718,6 @@ public class AIAssistantView extends ViewPart {
         }
     }
 
-    /** Internal error info holder for marker data */
     private static class ErrorInfo {
         String severity;
         String message;
